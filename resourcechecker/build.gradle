@@ -1,0 +1,20 @@
+plugins {
+    id 'java-library'
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+apply from: file('mavenCentral-android-publish.gradle')
+
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+dependencies {
+    api gradleApi()
+    implementation localGroovy()
+    compileOnly 'com.android.tools.build:gradle:7.2.2'
+    implementation 'pink.madis.apk.arsc:android-chunk-utils:0.0.7'
+    implementation "commons-io:commons-io:2.14.0"
+}

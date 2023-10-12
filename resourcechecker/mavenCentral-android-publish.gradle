@@ -1,0 +1,25 @@
+apply plugin: 'maven-publish'
+apply plugin: 'signing'
+
+task androidSourcesJar(type: Jar) {
+    if (project.hasProperty("android")) {
+        from android.sourceSets.main.java.srcDirs
+    } else {
+        from sourceSets.main.allSource
+    }
+    classifier 'sources'
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId "com.ptrain.android"
+            artifactId project.name
+            version  project.version
+            from components.java
+            artifact androidSourcesJar {
+                classifier "sources"
+            }
+        }
+    }
+}
