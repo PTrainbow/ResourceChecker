@@ -25,12 +25,12 @@
 然后在根目录 build.gradle 取消注释
 
 ```groovy
-//        classpath "com.ptrain.android:resourcechecker:0.0.1"
+// classpath "com.ptrain.android:resourcechecker:0.0.1"
 ```
 app 目录 build.gradle 取消注释
 
 ```groovy
-//apply plugin: "com.ptrain.android.resourcechecker"
+// apply plugin: "com.ptrain.android.resourcechecker"
 ```
 
 ## 验证
