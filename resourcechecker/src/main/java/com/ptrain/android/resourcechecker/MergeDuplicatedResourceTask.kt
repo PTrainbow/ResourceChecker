@@ -1,12 +1,14 @@
 package com.ptrain.android.resourcechecker
 
 import com.android.build.gradle.api.ApplicationVariant
+import com.android.build.gradle.internal.res.LinkApplicationAndroidResourcesTask
 import com.android.build.gradle.internal.tasks.OptimizeResourcesTask
 import com.ptrain.android.resourcechecker.UnzipUtils.zip
 import org.apache.commons.io.FileUtils
 import org.gradle.api.Action
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.UnknownTaskException
 import pink.madis.apk.arsc.ResourceFile
 import pink.madis.apk.arsc.ResourceTableChunk
 import pink.madis.apk.arsc.StringPoolChunk
@@ -30,22 +32,41 @@ class MergeDuplicatedResourceTask {
         const val REPEAT_MAPPING_TEXT_FILE_NAME = "duplicated-resources.txt"
     }
 
-    fun run(project: Project, applicationVariant: ApplicationVariant) {
+    fun configure(project: Project, applicationVariant: ApplicationVariant) {
         val variantName = applicationVariant.name.capitalize()
-        // 高版本 agp task 为 optimizeResources
-        val processResource = project.tasks.getByName("optimize${variantName}Resources")
-        processResource.doLast(object : Action<Task> {
+        // 高版本 agp task 默认为 optimizeResources，但是可能也会被强制关闭
+        var processResource: Task? = null
+        try {
+            processResource = project.tasks.getByName("optimize${variantName}Resources")
+        } catch (e: UnknownTaskException) {
+            println("optimizeResource is not enabled, try to find processResourceTask")
+            processResource = project.tasks.getByName("process${variantName}Resources")
+        }
+        processResource?.doLast(object : Action<Task> {
             override fun execute(task: Task) {
                 // 主逻辑
-                val resourcesTask = task as OptimizeResourcesTask
-                val resPackageOutputFolder = resourcesTask.optimizedProcessedRes
-                // 寻找 .ap_ 文件
-                resPackageOutputFolder.asFileTree.files
-                    .filter {
-                        it.name.endsWith(".ap_")
-                    }.forEach { file ->
-                        parseApZip(file, project)
+                val resPackageOutputFolder = when (task) {
+                    is OptimizeResourcesTask -> {
+                        task.optimizedProcessedRes
                     }
+
+                    is LinkApplicationAndroidResourcesTask -> {
+                        task.resPackageOutputFolder
+                    }
+
+                    else -> {
+                        null
+                    }
+                }
+                // 寻找 .ap_ 文件
+                resPackageOutputFolder?.let { directory ->
+                    directory.asFileTree.files
+                        .filter {
+                            it.name.endsWith(".ap_")
+                        }.forEach { file ->
+                            parseApZip(file, project)
+                        }
+                }
             }
         })
     }

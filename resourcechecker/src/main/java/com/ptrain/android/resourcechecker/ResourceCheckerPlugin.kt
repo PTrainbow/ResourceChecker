@@ -13,9 +13,10 @@ class ResourceCheckerPlugin : Plugin<Project> {
             }
             val android = project.extensions.findByName("android")
             (android as AppExtension).applicationVariants.forEach {
+
                 val variantName = it.name.capitalize()
                 if (!variantName.toLowerCase().contains("debug")) {
-                    MergeDuplicatedResourceTask().run(project, it)
+                    MergeDuplicatedResourceTask().configure(project, it)
                 }
             }
         }
