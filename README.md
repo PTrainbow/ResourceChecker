@@ -1,6 +1,8 @@
 # ResourceChecker
 
-资源去重插件
+简单的资源去重插件
+
+提供原理和思路，可以 fork 自己添加额外白名单配置等
 
 ## 功能
 
@@ -9,9 +11,10 @@
 3. 适配 split abi
 
 ## 原理
-为 OptimizeResourcesTask(注意：release type 才可能有此任务) 注入 last action
 
-主要逻辑为：
+为 ResourcesTask 注入 last action，优先寻找 OptimizeResourcesTask(AGP 7.x 默认存在，但是也可以强制关闭此 task)，其次寻找 ProcessResourcesTask
+
+action 主要逻辑为：
 1. 拿到资源打包后的 .ap_ 文件，读取 .ap_ 文件，获取到资源文件的 crc 码，收集重复的资源文件
 
 2. 修改 .arsc 文件，使不同的资源名指向相同的原始资源文件，并删除重复的资源文件
