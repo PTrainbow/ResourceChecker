@@ -6,6 +6,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.security.MessageDigest
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -17,6 +18,10 @@ import java.util.zip.ZipOutputStream
  *
  */
 object UnzipUtils {
+    private const val ESC = '\u001B'
+    private const val CSI_RESET = "$ESC[0m"
+    private const val CSI_RED = "$ESC[31m"
+
     /**
      * @param zipFilePath
      * @param destDirectory
@@ -107,4 +112,21 @@ object UnzipUtils {
             }
         }
     }
+
+    fun File.md5(): String {
+        val md = MessageDigest.getInstance("MD5")
+        return this.inputStream().use { fis ->
+            val buffer = ByteArray(8192)
+            generateSequence {
+                when (val bytesRead = fis.read(buffer)) {
+                    -1 -> null
+                    else -> bytesRead
+                }
+            }.forEach { bytesRead -> md.update(buffer, 0, bytesRead) }
+            md.digest().joinToString("") { "%02x".format(it) }
+        }
+    }
+
+    fun red(s: Any) = "${CSI_RED}${s}${CSI_RESET}"
+
 }

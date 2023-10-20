@@ -3,6 +3,8 @@ package com.ptrain.android.resourcechecker
 import com.android.build.gradle.api.ApplicationVariant
 import com.android.build.gradle.internal.res.LinkApplicationAndroidResourcesTask
 import com.android.build.gradle.internal.tasks.OptimizeResourcesTask
+import com.ptrain.android.resourcechecker.UnzipUtils.md5
+import com.ptrain.android.resourcechecker.UnzipUtils.red
 import com.ptrain.android.resourcechecker.UnzipUtils.zip
 import org.apache.commons.io.FileUtils
 import org.gradle.api.Action
@@ -28,22 +30,23 @@ import java.util.zip.ZipOutputStream
 class MergeDuplicatedResourceTask {
 
     companion object {
+        private const val TASK_NAME = "MergeDuplicatedResourceTask"
         private const val ARSC = "resources.arsc"
-        const val REPEAT_MAPPING_TEXT_FILE_NAME = "duplicated-resources.txt"
+        const val REPEAT_MAPPING_TEXT_FILE_NAME = "duplicated.txt"
     }
 
-    fun configure(project: Project, applicationVariant: ApplicationVariant) {
+    fun run(project: Project, applicationVariant: ApplicationVariant) {
         val variantName = applicationVariant.name.capitalize()
         // 高版本 agp task 默认为 optimizeResources，但是可能也会被强制关闭
         var processResource: Task? = null
         try {
             processResource = project.tasks.getByName("optimize${variantName}Resources")
         } catch (e: UnknownTaskException) {
-            println("optimizeResource is not enabled, try to find processResourceTask")
             processResource = project.tasks.getByName("process${variantName}Resources")
         }
         processResource?.doLast(object : Action<Task> {
             override fun execute(task: Task) {
+
                 // 主逻辑
                 val resPackageOutputFolder = when (task) {
                     is OptimizeResourcesTask -> {
@@ -64,7 +67,10 @@ class MergeDuplicatedResourceTask {
                         .filter {
                             it.name.endsWith(".ap_")
                         }.forEach { file ->
+                            val startTs = System.currentTimeMillis()
+                            println("$TASK_NAME: start merging ${file.nameWithoutExtension}")
                             parseApZip(file, project)
+                            println("$TASK_NAME: merge ${file.nameWithoutExtension} done! cost ${System.currentTimeMillis() - startTs}ms")
                         }
                 }
             }
@@ -106,49 +112,71 @@ class MergeDuplicatedResourceTask {
         ZipFile(apZip).entries()
             .iterator()
             .forEach {
+                if (it.size == 0L) {
+                    return@forEach
+                }
                 val file = File(it.name)
-                val key = "${file.parent}#${it.crc}"
+                val key = "${it.crc}#${it.size}#${file.extension}"
                 val list = duplicatedMap.getOrDefault(key, mutableListOf())
                 list.add(it)
                 duplicatedMap[key] = list
             }
         val fileWriter =
-            FileWriter("${project.buildDir}${File.separator}${REPEAT_MAPPING_TEXT_FILE_NAME}")
+            FileWriter("${project.buildDir}${File.separator}${apZip.nameWithoutExtension}-${REPEAT_MAPPING_TEXT_FILE_NAME}")
 
         var deleteRepeatNumbers = 0L
         var deleteRepeatFileSize = 0L
         val repeatSizeMap = hashMapOf<String, Int>()
+        val repeatMd5Map = hashMapOf<String, String>()
+
+        // 读取 arsc
+        val arscChunks = arscFileStream.chunks
+            .filterIsInstance<ResourceTableChunk>()
+
         // 遍历重复项，删除重复资源，输出结果文件
         duplicatedMap.filter { (_, duplicatedEntry) ->
             duplicatedEntry.size >= 2
         }.forEach { (_, duplicatedEntry) ->
             val firstZipEntry = duplicatedEntry[0]
             val duplicatedEntries = duplicatedEntry.subList(1, duplicatedEntry.size)
+            val firstFile = File("${unZipDirPath}${File.separator}${firstZipEntry.name}")
+            if (!firstFile.exists()) {
+                println(red("file ${firstZipEntry.name} not exists! Is your file system case sensitive?"))
+                return@forEach
+            }
+            // crc 相同的，再次计算一遍 md5 兜底
+            repeatMd5Map[firstZipEntry.name] = firstFile.md5()
             repeatSizeMap[firstZipEntry.name] = duplicatedEntry.size
             fileWriter.write("${firstZipEntry.name} <--- ${firstZipEntry.name}\n ")
-            deleteRepeatNumbers += duplicatedEntries.size
             duplicatedEntries.forEach { zipEntry ->
-                fileWriter.write("${getSpaceByLength(firstZipEntry.name.length)}<--- ${zipEntry.name}\n")
+                val duplicatedFile = File("${unZipDirPath}${File.separator}${zipEntry.name}")
+                if (!duplicatedFile.exists()) {
+                    return@forEach
+                }
+                val tmpMd5 = duplicatedFile.md5()
+                if (repeatMd5Map[firstZipEntry.name] != tmpMd5) {
+                    println(red("these two files ${firstZipEntry.name} ${zipEntry.name} have the same crc, but their md5 is not the same! Is your file system case sensitive?"))
+                    return@forEach
+                }
+                fileWriter.write("${getSpaceByLength(firstZipEntry.name.length)} <--- ${zipEntry.name}\n")
                 // 删除重复资源
-                File("${unZipDirPath}${File.separator}${zipEntry.name}").delete()
+                duplicatedFile.delete()
                 deleteRepeatFileSize += zipEntry.size
-                // 修改 arsc 文件指向
-                arscFileStream
-                    .chunks
-                    .asSequence()
-                    .filterIsInstance<ResourceTableChunk>()
-                    .forEach {
-                        val index = it.stringPool.indexOf(zipEntry.name)
-                        if (index != -1) {
-                            it.stringPool.setString(index, firstZipEntry.name)
-                        }
-                    }
+                deleteRepeatNumbers++
+                // 遍历修改
+                arscChunks.forEach {
+                    it.stringPool.setString(zipEntry.name, firstZipEntry.name)
+                }
             }
             fileWriter.write("----------------------------------------------\n")
         }
         fileWriter.write("removed count:${deleteRepeatNumbers}\n")
-        fileWriter.write("removed size:${humanReadableByteCountBin(deleteRepeatFileSize)}\n")
+        val humanRead = humanReadableByteCountBin(deleteRepeatFileSize)
+        fileWriter.write("removed size:$humanRead\n")
         fileWriter.close()
+        println("$TASK_NAME: removed count = $deleteRepeatNumbers")
+        println("$TASK_NAME: removed size = $humanRead")
+
     }
 
     /**
@@ -193,12 +221,19 @@ class MergeDuplicatedResourceTask {
     }
 
 
-    fun StringPoolChunk.setString(index: Int, value: String) {
+    fun StringPoolChunk.setString(old: String, new: String) {
         try {
             val field = javaClass.getDeclaredField("strings")
             field.isAccessible = true
             val list = field.get(this) as MutableList<String>
-            list[index] = value
+            // 需要替换所有
+            list.replaceAll {
+                if (it == old) {
+                    new
+                } else {
+                    it
+                }
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
